@@ -21,7 +21,8 @@ jobs:
 
       - name: Login to AWS ECR
         run: |
-          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
+          docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
 
       - name: Build and Tag Docker Image
         run: |
@@ -37,11 +38,16 @@ jobs:
     runs-on: ubuntu-latest    
     steps:
       - name: SSH into EC2 and Deploy
+        env:
+          PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          HOST: ${{ secrets.EC2_HOST }}
+          USER: ubuntu
+          IMAGE: ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
         run: |
-          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > private_key.pem
+          echo "$PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
-
-          ssh -o StrictHostKeyChecking=no -i private_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+          
+          ssh -o StrictHostKeyChecking=no -i private_key.pem $USER@$HOST << EOF
             echo "🚀 Starting Deployment on EC2..."
 
             # Install Docker if not installed
@@ -50,21 +56,20 @@ jobs:
               sudo apt install -y docker.io
               sudo systemctl start docker
               sudo systemctl enable docker
-              sudo usermod -aG docker $USER
+              sudo usermod -aG docker \$USER
             fi
 
-            # Login to AWS ECR
-            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
-
-            # Stop and Remove old container if exists
-            docker stop my-html-container || true
-            docker rm my-html-container || true
+            # Login to ECR
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
+            docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
 
             # Pull latest Docker image from ECR
-            docker pull ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+            docker stop my-html-container || true
+            docker rm my-html-container || true
+            docker pull $IMAGE
 
             # Run new container
-            docker run -d -p 80:80 --name my-html-container ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+            docker run -d -p 80:80 --name my-html-container $IMAGE
 
-            echo "🚀 Deployment Completed Successfully!"
+            echo "🚀 Deployment completed successfully!"
           EOF
